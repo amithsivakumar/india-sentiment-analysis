@@ -2,62 +2,91 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 from textblob import TextBlob
-import re
+import requests
+from datetime import datetime
 
-# --- 1. DATA LAYER (Simulating an API with more data) ---
-class DataProvider:
-    def __init__(self):
-        self.mock_data = {
-            "India Elections 2026": [
-                {"text": "Excited for #IndiaElections2026! Hope for progress.", "date": "2026-05-03"},
-                {"text": "Economic policies need a major overhaul. #India", "date": "2026-05-03"},
-                {"text": "Digital India is reaching new heights. #Growth", "date": "2026-05-04"},
-                {"text": "The new manifestos look promising for the youth.", "date": "2026-05-04"},
-                {"text": "High inflation is a concern for voters. #Economy", "date": "2026-05-05"},
-                {"text": "Proud of our democratic process. #VoterPride", "date": "2026-05-05"},
-                {"text": "Infrastructure development is visible everywhere.", "date": "2026-05-05"}
-            ],
-            "IPL 2026 – CSK vs MI": [
-                {"text": "Dhoni's last-ball six! Unbelievable! #CSK #IPL2026", "date": "2026-05-03"},
-                {"text": "Bumrah's yorkers are still unplayable. #MI", "date": "2026-05-03"},
-                {"text": "Worst pitch conditions for a T20 match.", "date": "2026-05-05"},
-                {"text": "The atmosphere at Chepauk is electric! #WhistlePodu", "date": "2026-05-05"}
-            ],
-            "Movie: Bahubali 3": [
-                {"text": "Bahubali 3 trailer is out! Pure goosebumps. #Prabhas", "date": "2026-05-03"},
-                {"text": "The VFX quality is Hollywood level. #Bahubali3", "date": "2026-05-03"},
-                {"text": "The storyline feels a bit recycled. #Disappointed", "date": "2026-05-05"}
-            ]
-        }
-    def fetch_posts(self, topic):
-        return self.mock_data.get(topic, [])
+# --- CONFIGURATION ---
+# Get your free key at newsapi.org
+API_KEY = "6ee040b6e37d4f3ab1296ef004af035e" 
 
-# --- 2. LOGIC LAYER ---
-def analyze_sentiment(text):
+class NewsEngine:
+    """Handles real-time data fetching from NewsAPI."""
+    
+    def fetch_real_time(self, topic):
+        # We query news articles to simulate social media 'posts'
+        url = f'https://newsapi.org/v2/everything?q={topic}&language=en&sortBy=publishedAt&apiKey={API_KEY}'
+        
+        try:
+            response = requests.get(url)
+            data = response.json()
+            articles = data.get('articles', [])
+            
+            # Formatting the data for our analysis
+            clean_posts = []
+            for art in articles[:15]: # Take top 15 latest results
+                clean_posts.append({
+                    "text": art['title'], # Using headlines as our 'posts'
+                    "date": art['publishedAt'][:10],
+                    "source": art['source']['name']
+                })
+            return clean_posts
+        except:
+            # Fallback if API fails or Key is missing
+            return [{"text": "Error connecting to live API. Check your API Key.", "date": str(datetime.now().date()), "source": "System"}]
+
+def get_sentiment(text):
     score = TextBlob(text).sentiment.polarity
     if score > 0: return "Positive", score
     elif score < 0: return "Negative", score
     else: return "Neutral", score
 
-# --- 3. UI LAYER ---
-st.set_page_config(page_title="India Trend Analyzer", layout="wide")
-st.title("📊 Social Media Trend & Sentiment Analyzer")
-st.sidebar.header("Options")
-topic_choice = st.sidebar.selectbox("Select Topic", list(DataProvider().mock_data.keys()))
+# --- STREAMLIT UI ---
+st.set_page_config(page_title="India Real-Time Analyzer", layout="wide")
 
-if st.sidebar.button("Analyze"):
-    data = DataProvider().fetch_posts(topic_choice)
-    df = pd.DataFrame(data)
-    df[['Sentiment', 'Score']] = df['text'].apply(lambda x: pd.Series(analyze_sentiment(x)))
+st.title("🇮🇳 Real-Time Trend & Sentiment Analyzer")
+st.sidebar.info("This app pulls LIVE headlines using NewsAPI to analyze current sentiment.")
 
-    # Metrics
-    c1, c2 = st.columns(2)
-    c1.metric("Total Posts", len(df))
-    c2.metric("Avg Sentiment", round(df['Score'].mean(), 2))
+topic_map = {
+    "Elections": "India Elections 2026",
+    "IPL": "IPL Cricket CSK RCB MI",
+    "Movies": "Bollywood Movies 2026"
+}
 
-    # Charts
-    fig, ax = plt.subplots()
-    df['Sentiment'].value_counts().plot(kind='bar', color=['green', 'red', 'gray'], ax=ax)
-    st.pyplot(fig)
-    
-    st.table(df[['text', 'Sentiment']])
+topic_choice = st.sidebar.selectbox("Choose Live Topic", list(topic_map.keys()))
+run_btn = st.sidebar.button("Fetch Live Data")
+
+if run_btn:
+    engine = NewsEngine()
+    with st.spinner('Fetching live data from the cloud...'):
+        posts = engine.fetch_real_time(topic_map[topic_choice])
+        
+        if posts:
+            df = pd.DataFrame(posts)
+            # Add Sentiment
+            df[['Sentiment', 'Score']] = df['text'].apply(lambda x: pd.Series(get_sentiment(x)))
+            
+            # --- DASHBOARD ---
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                st.subheader("Sentiment Summary")
+                sentiment_counts = df['Sentiment'].value_counts()
+                fig, ax = plt.subplots()
+                sentiment_counts.plot(kind='pie', autopct='%1.1f%%', colors=['#66b3ff','#99ff99','#ff9999'], ax=ax)
+                st.pyplot(fig)
+                
+            with col2:
+                st.subheader("Live Mentions")
+                st.dataframe(df[['text', 'Sentiment']], use_container_width=True)
+
+            st.divider()
+            st.subheader("Daily Sentiment Polarity")
+            st.line_chart(df.set_index('date')['Score'])
+            
+            # Save for report
+            df.to_csv("latest_report.csv")
+            st.success("Analysis Complete. Report saved as CSV.")
+        else:
+            st.error("Could not find any live data for this topic right now.")
+else:
+    st.warning("👈 Enter your API Key in the code and click 'Fetch Live Data' to see it in action!") 
